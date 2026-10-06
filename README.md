@@ -32,7 +32,7 @@
 | 项目 | 值 |
 |---|---|
 | 名称 | 终末地签到 |
-| 地址 | `https://github.com/luc321/endfield-auto-sign.git` |
+| 地址 | `https://github.com/Luccc/endfield-auto-sign.git` |
 | 分支 | `master` |
 | 定时 | `0 0 23* * *` |
 
