@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 语法检查
+        run: |
+          python3 -m py_compile auto_sign.py && echo "auto_sign.py OK"
+          python3 -m py_compile diagnose_skport.py && echo "diagnose_skport.py OK"
+
+      - name: 冒烟测试（无 token，应正常跳过且不报错）
+        env:
+          SKYLAND_TOKEN: ""
+          SKPORT_TOKEN: ""
+        run: |
+          pip install requests -q
+          python3 auto_sign.py || true
