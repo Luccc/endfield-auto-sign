@@ -19,7 +19,7 @@ Update: 2026/10/6
 环境变量：
   SKYLAND_TOKEN   国服 token，多个用 ; 或 , 分隔
   SKPORT_TOKEN    国际服 token，多个用 ; 或 , 分隔
-  SKPORT_PROXY    国际服专用代理（需境外节点），如 http://192.168.1.100:7890
+  SKPORT_PROXY    国际服专用代理（需境外节点），如 http://192.168.5.5:7890
   SKYLAND_PROXY   国服专用代理，一般留空
   SKPORT_NOTIFY / SKYLAND_NOTIFY  设为 true 开启推送
 
@@ -94,11 +94,11 @@ VNAME = '1.0.0'
 
 # 专用环境变量（在青龙面板中添加，推荐方式）
 ENV_PROXY_CN = "SKYLAND_PROXY"      # 国服专用，留空/不设置 = 直连
-ENV_PROXY_GLOBAL = "SKPORT_PROXY"   # 国际服专用，填境外代理，如 http://192.168.1.100:7890
+ENV_PROXY_GLOBAL = "SKPORT_PROXY"   # 国际服专用，填境外代理，如 http://192.168.5.5:7890
 
 # 也可在下方直接硬编码代理地址（优先级高于环境变量），留空则用环境变量
-MANUAL_PROXY_CN = ""                # 例: "http://192.168.1.100:7890"
-MANUAL_PROXY_GLOBAL = ""            # 例: "http://192.168.1.100:7890"
+MANUAL_PROXY_CN = ""                # 例: "http://192.168.5.5:7890"
+MANUAL_PROXY_GLOBAL = ""            # 例: "http://192.168.5.5:7890"
 
 # 绕过代理的写法：空字符串表示"显式禁用代理"，可覆盖系统环境变量
 NO_PROXY = {'http': '', 'https': ''}
@@ -378,6 +378,14 @@ def do_daily_sign(cred,cfg):
         parse_url = parse.urlparse(cfg["SIGN_URL"])
         sign, sign_header = generate_sign(sign_token, parse_url.path, '')
         # 组装签到头
+        # 关键修复：国际服必须带 Referer / Origin，否则接口返回
+        # code=19001「无法获取当前角色位置，请确保已登录游戏」——
+        # 这是风控校验，与账号是否真的登录游戏无关。
+        # 实测（2026/10/6，代理 192.168.5.5:7890 + 真实 token 验证）：
+        #   无 Referer/Origin → code=19001 无法获取当前角色位置
+        #   有 Referer/Origin → code=10001 Please do not sign in again!（签到成功，今天已签过）
+        server_key = 'cn' if cfg is SERVER_CONFIG['cn'] else 'global'
+        is_global = (server_key == 'global')
         header = {
             'cred': cred,
             'platform': PLATFORM,
@@ -385,10 +393,14 @@ def do_daily_sign(cred,cfg):
             'timestamp': sign_header['timestamp'],
             'sign': sign,
             'sk-game-role': role_str,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://game.skport.com/' if is_global else 'https://game.skland.com/',
+            'Origin': 'https://game.skport.com' if is_global else 'https://game.skland.com',
         }
+        if is_global:
+            header['sk-language'] = 'zh-cn'
         # 发送签到请求（body为空）
-        server_key = 'cn' if cfg is SERVER_CONFIG['cn'] else 'global'
         proxies = get_proxies(server_key)
         try:
             r = requests.post(cfg["SIGN_URL"], headers=header, json=None,
@@ -418,10 +430,18 @@ def do_daily_sign(cred,cfg):
             else:
                 msg = f'[账号{account_num}] {role_name}({channel}) - 每日签到成功（无奖励信息）'
         else:
-            # 错误处理逻辑（保持不变）
+            # 错误处理：10001 是"今日已签到"，属于正常状态而非失败
             error_msg = resp.get("message", "未知错误")
-            if "请勿重复签到" in error_msg or "Please do not sign in again!" in error_msg:
+            code = resp.get('code')
+            already = (code == 10001
+                       or "请勿重复签到" in error_msg
+                       or "do not sign in again" in error_msg.lower())
+            if already:
                 msg = f'[账号{account_num}] {role_name}({channel}) - 今日已签到，请勿重复签到'
+            elif code == 19001:
+                msg = (f'[账号{account_num}] {role_name}({channel}) - 签到失败：{error_msg}\n'
+                       f'         提示：这是接口风控。若脚本已自动带上 Referer/Origin，'
+                       f'请检查是否为旧版脚本，建议更新到最新版。')
             else:
                 msg = f'[账号{account_num}] {role_name}({channel}) - 签到失败：{error_msg}'
 

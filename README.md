@@ -13,15 +13,28 @@
 
 ## 解决的核心问题
 
-如果你遇到过这个报错：
+### 问题一：报错 `Expecting value: line 1 column 1 (char 0)`
 
-```
-[国际服] 账号1 异常：Expecting value: line 1 column 1 (char 0)
-```
-
-**这跟你的 token 无关。** 原因是国际服域名 `zonai.skport.com` 的 CDN 对中国大陆出口 IP 返回了404 的网页，而不是 API 的 JSON 响应。脚本用 JSON 解析器去解析 HTML  webpage，于是抛出这条天书报错。
+**这跟你的 token 无关。** 原因是国际服域名 `zonai.skport.com` 的 CDN 对中国大陆出口 IP 返回了 404 的网页，而不是 API 的 JSON 响应。脚本用 JSON 解析器去解析 HTML 页面，于是抛出这条天书报错。
 
 **解决办法：给国际服配一个境外代理。** 详见下方配置。
+
+### 问题二：报错 `code=19001 无法获取当前角色位置，请确保已登录游戏`
+
+这是国际服的**风控校验**，与账号是否真的登录过游戏无关。实测确认：**国际服签到请求必须携带 `Referer: https://game.skport.com/` 和 `Origin: https://game.skport.com`**，否则必定返回 19001。
+
+本版本已自动补齐这些请求头，你无需手动处理。
+
+> 实测记录（2026/10/6，真实 token + 境外代理验证）：
+>
+> | 请求头 | 接口响应 |
+> |---|---|
+> | 无 Referer/Origin | `code=19001无法获取当前角色位置` |
+> | 有 Referer/Origin | `code=10001 Please do not sign in again!`（签到成功，今天已签过） |
+
+### 问题三：`code=10001` 不是错误
+
+国际服「今日已签到」的返回码是 `10001`，本版本会正确识别为「今日已签到，请勿重复签到」，而不是报为签到失败。
 
 ---
 
@@ -44,7 +57,7 @@
 |---|---|---|---|
 | 国服 token | `SKYLAND_TOKEN` | 二选一 | `token1;token2` |
 | 国际服 token | `SKPORT_TOKEN` | 二选一 | `token1;token2` |
-| **国际服代理** | `SKPORT_PROXY` | 国际服必填 | `http://192.168.1.100:7890` |
+| **国际服代理** | `SKPORT_PROXY` | 国际服必填 | `http://192.168.5.5:7890` |
 | 国服代理 | `SKYLAND_PROXY` | 否 | 一般留空 |
 | 开启推送 | `SKYLAND_NOTIFY` | 否 | `true` |
 
@@ -87,15 +100,17 @@ https://zonai.skport.com/web/v1/game/endfield/attendance
 
 ### Docker 额外配置
 
-在青龙的容器启动参数（compose 文件 `environment`段）里加：
+如果青龙跑在 Docker 里，容器内的 `127.0.0.1` 指向容器自己，**必须填宿主机的局域网 IP**。
+
+在青龙的容器启动参数（compose 文件 `environment` 段）里加：
 
 ```yaml
 environment:
-  - http_proxy=http://172.17.0.1:7890
-  - https_proxy=http://172.17.0.1:7890
+  - http_proxy=http://192.168.5.5:7890
+  - https_proxy=http://192.168.5.5:7890
 ```
 
-其中 `172.17.0.1` 换成你宿主机的局域网 IP。
+> 如果青龙不在 Docker 里（或青龙本身就是宿主机），加 `SKPORT_PROXY` 环境变量就够了，不需要改容器配置。
 
 ---
 
@@ -128,7 +143,7 @@ python3 diagnose_skport.py
 ```
 代理配置：
   国服→ 强制直连
-  国际服     → http://192.168.1.100:7890  (来自 SKPORT_PROXY)
+  国际服     → http://192.168.5.5:7890  (来自 SKPORT_PROXY)
 
 【国际服接口】
   [✅ JSON正常] AS授权服务器    HTTP 400
@@ -148,11 +163,17 @@ python3 diagnose_skport.py
 **Q：报错 `Expecting value: line 1 column 1 (char 0)`？**
 A：网络问题，不是 token 问题。给国际服配 `SKPORT_PROXY` 境外代理。
 
+**Q：报错 `无法获取当前角色位置，请确保已登录游戏`？**
+A：旧版脚本缺少 Referer/Origin。本版本已修复，请确认用的是最新版本。
+
 **Q：报错 `代理连接失败`？**
 A：代理地址连不上。检查代理是否运行、端口是否正确、容器内是否该用局域网 IP。
 
 **Q：国际服报 404 网页错误，但代理配了？**
 A：代理节点还在境内，换一个境外节点。
+
+**Q：`今日已签到` 是失败了吗？**
+A：不是，这是正常的，国际服返回码 `10001` 就表示今天已经签过。
 
 **Q：提示 `未找到青龙面板的 notify.py`？**
 A：正常提示，只影响推送功能，不影响签到。青龙一般自带 notify.py。
